@@ -121,7 +121,6 @@ s_obj <- FindClusters(
     'unintegrated_res_1.6',
     'unintegrated_res_1.8',
     'unintegrated_res_2.0'
-    
   )
 )
 
