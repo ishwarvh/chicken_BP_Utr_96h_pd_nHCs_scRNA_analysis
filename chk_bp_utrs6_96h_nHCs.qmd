@@ -1,0 +1,442 @@
+---
+title: "Single cell analysis of the BP, Utricle and 96h post-damage new hair cell datasets"
+author: Ishwar Hosamani
+date: today
+execute: 
+  echo: true
+format: 
+  html:
+    
+    self-contained: true
+    code-fold: true
+    code-block-bg: true
+editor_options: 
+  chunk_output_type: console
+---
+
+## 
+
+::: callout-note
+This analysis includes the utricle s6 cluster (turn over hair cells)
+:::
+
+```{r}
+#| label: import packages
+#| echo: false
+
+library(Seurat)
+library(SeuratWrappers)
+library(R.utils)
+library(scCustomize)
+library(plotly)
+library(ggplot2)
+library(patchwork)
+library(glmGamPoi)
+library(clustree)
+library(dittoSeq)
+library(EnhancedVolcano)
+
+```
+
+```{r}
+#| label: Read in the dataset
+
+s_obj <- readRDS("Data.combined.BP.Utricle.nHC.comparison with U.S6.rds")
+
+#This object was received from MK and it counts unnormalized RNA counts
+
+```
+
+```{r}
+#| label: peek into the dataset
+
+
+print(table(s_obj$orig.ident))
+
+print(table(s_obj$Original.cluster)) # These idenitites are based on the previous celltrails analysis
+
+```
+
+```{r}
+#| label: Set colour scheme
+#| echo: false
+
+sc_cols <- scCustomize_Palette(25)
+sc_cols <- sc_cols[-2] #remove white/light gray
+```
+
+```{r}
+#| label: preprocessing of the seurat object
+
+# Convert the seurat object to a v5 assay object and split it inot multiple layers based on its orig.ident
+
+s_obj[['RNA']] <- as(object = s_obj[['RNA']], Class = 'Assay5')
+
+s_obj[['RNA']] <- split(s_obj[['RNA']], f = s_obj$orig.ident)
+
+s_obj
+
+# Add metadata column with CellTrailsID
+s_obj$CellTrailsID[s_obj$Original.cluster == 'BP.S1'] <- "BP.HC1"
+s_obj$CellTrailsID[s_obj$Original.cluster == 'U.S6'] <- "Differentiating Utr HC"
+
+```
+
+### Perform SCTransform normalization and clustering of the merged dataset (unintegrated analysis)
+
+```{r}
+#| label: SCTransform followed by clustering
+
+s_obj <- SCTransform(s_obj,
+                     seed.use = 321,
+                     verbose = T,
+                     vst.flavor = 'v2')
+
+
+s_obj <- RunPCA(s_obj, npcs = 50 , seed.use = 321)
+
+
+ggsave(
+  plot = ElbowPlot(s_obj, ndims = 30),
+  filename = "plots/unintegrated_plots/elbowPlot.png",
+  width = 7,
+  height = 5,
+  bg = 'white'
+)
+
+
+s_obj <- FindNeighbors(s_obj, dims = 1:10, reduction = 'pca') #use dim=10 based on the elbow plot
+
+s_obj <- FindClusters(
+  s_obj,
+  resolution = c(0.2, 0.4, 0.6, 0.8, 1.0, 1.2, 1.4, 1.6, 1.8, 2.0),
+  cluster.name = c(
+    'unintegrated_res_0.2',
+    'unintegrated_res_0.4',
+    'unintegrated_res_0.6',
+    'unintegrated_res_0.8',
+    'unintegrated_res_1.0',
+    'unintegrated_res_1.2',
+    'unintegrated_res_1.4',
+    'unintegrated_res_1.6',
+    'unintegrated_res_1.8',
+    'unintegrated_res_2.0'
+    
+  )
+)
+
+s_obj <- RunUMAP(
+  s_obj,
+  dims = 1:10,
+  reduction = 'pca',
+  n.components = 3L,
+  reduction.name = 'unintegrated_umap',
+  reduction.key = 'uninteg_UMAP_',
+  seed.use = 321
+)
+```
+
+### Visualizations
+
+```{r}
+#| label: cluster relationship plots
+
+#clustree
+ggsave(
+  plot = clustree(s_obj, prefix = "unintegrated_res_"),
+  filename = "plots/unintegrated_plots/clustree_uninteg_chick_bp_utr_s6_96h_pd.png",
+  height = 10,
+  width = 8
+)
+
+
+# Plot cluster tree/relationships
+# "BuildClusterTree to check optimal if optimal clustering has been acheived"
+
+# Ideally, the tools below should be used to obtain nice looking plots once a identity class(res) has been chosen based on the output of clustree in the previous step
+
+Idents(s_obj) <- s_obj$unintegrated_res_1.0
+s_obj <- BuildClusterTree(
+    s_obj,
+    reorder = F,
+    reorder.numeric = F,
+    dims = 1:10
+  )
+Tool(object = s_obj, slot = 'BuildClusterTree')
+
+png("plots/unintegrated_plots/uninteg_plotClusterTree_res1.0.png", width = 20, height = 16, units = "cm", res = 300)
+PlotClusterTree(object = s_obj)
+title("clustree - uninteg_chick_bp_utr_s6_96h_pd - res 1.0")
+dev.off()
+
+# PlotClusterTree(object = s_obj)
+
+# Beautify buildcluster tree results using ggtree
+tree <- Tool(object = s_obj, slot = "BuildClusterTree")
+# tree$tip.label <- paste0("Cluster", tree$tip.label)
+
+p_tree <- ggtree::ggtree(tree, aes(x, y)) +
+  scale_y_reverse() +
+  ggtree::geom_tree() +
+  ggtree::theme_tree() +
+  ggtree::geom_tiplab(offset = 1) +
+  ggtree::geom_tippoint(color = sc_cols[1:length(tree$tip.label)], shape = 16, size = 7) +
+  coord_cartesian(clip = 'off') +
+  theme(plot.margin = unit(c(1,2.5,0,0), 'cm')) + ggtitle(label =  "uninteg_chick_BP_utr_s6_96h_pd_res1.0_PC10") + theme(plot.title = element_text(hjust = 0.5, vjust = 0.5))
+
+p_tree
+
+ggsave('plots/unintegrated_plots/uninteg_cluster_tree_res1.0_pc10.png', p_tree, height = 7, width = 5)
+
+```
+
+```{r}
+#| label: UMAP plots based on meta-information
+
+# patchworked UMAP with multiple variables
+ggsave(
+  plot = DimPlot_scCustom(
+    s_obj,
+    pt.size = 1,
+    alpha = 0.7,
+    repel = T,
+    label = F,
+    group.by = c('orig.ident', 'unintegrated_res_1.0', 'CellTrailsID'),
+    colors_use = sc_cols
+  ) + plot_annotation(
+    title = "BP_Utr_nHCs, SCT, nPCs=10",
+    theme = theme(plot.title = element_text(hjust = 0.5, size = 12))
+  ),
+  filename = 'plots/unintegrated_plots/uninteg_origIdent_CellTrailsID_res1.0_umap.png',
+  device = 'png',
+  width = 16,
+  height = 4.5,
+  dpi = 300,
+  scale = 1
+)
+
+
+
+# Patchworked PCA plot with multiple variables
+ggsave(
+  plot = DimPlot_scCustom(
+    s_obj,
+    reduction = 'pca',
+    pt.size = 0.75,
+    alpha = 0.7,
+    repel = T,
+    label = F,
+    group.by = c('orig.ident','unintegrated_res_1.0', 'CellTrailsID'),
+    colors_use = sc_cols,
+    
+  ),
+  filename = 'plots/unintegrated_plots/uninteg_origIdent_OrigCluster_res1.0_pcaPlot.png',
+  device = 'png',
+  width = 15,
+  height = 4,
+  dpi = 300,
+  scale = 1
+)
+
+
+
+# Plot UMAPs of multiple resolution
+ggsave(
+  plot = DimPlot_scCustom(
+    s_obj,
+    group.by = c(
+      "unintegrated_res_0.2",
+      "unintegrated_res_0.4",
+      "unintegrated_res_0.6",
+      "unintegrated_res_1.0",
+      "unintegrated_res_1.4",
+      "unintegrated_res_1.6"
+    ),
+    pt.size = 0.5,
+    alpha = 0.75, 
+    label.box = T,
+    label = F,
+    repel = T,
+    num_columns = 3,
+    colors_use = sc_cols
+  ) + plot_annotation(title = "BP_Utr_96h-pd_nHCs,    SCTransform, nPCs=10",theme=theme(plot.title=element_text(hjust=0.5, size = 11))),
+  filename = 'plots/unintegrated_plots/unintegrated_umaps_multiple_res.png',
+  device = 'png',
+  width = 12,
+  height = 7,
+  dpi = 300,
+  scale = 1
+)
+
+
+# PCAplot umaps for multiple resolutions
+ggsave(
+  plot = DimPlot_scCustom(
+    s_obj,
+    group.by = c(
+      "unintegrated_res_0.2",
+      "unintegrated_res_0.4",
+      "unintegrated_res_0.6",
+      "unintegrated_res_1.0",
+      "unintegrated_res_1.4",
+      "unintegrated_res_1.6"
+    ),
+    reduction = 'pca',
+    pt.size = 0.75,
+    alpha = 0.7,
+    label.box = T,
+    label = F,
+    repel = T,
+    num_columns = 3,
+    colors_use = sc_cols
+  ),
+  filename = 'plots/unintegrated_plots/unintegrated_pcaplots_multiple_res.png',
+  device = 'png',
+  width = 12,
+  height =7,
+  dpi = 300,
+  scale = 1
+)
+
+
+# Split dimplot split by CellTrailsID
+Idents(s_obj) <- s_obj$CellTrailsID
+
+ggsave(
+  plot = DimPlot_scCustom(
+    seurat_object = s_obj,
+    split.by = 'CellTrailsID',
+    reduction = "unintegrated_umap",
+    pt.size = 1.5,
+    alpha = 0.8,
+    label = F,
+    repel = T,
+    colors_use = sc_cols
+  ) + plot_annotation(
+    title = "BP_UtrS6+nHCs, splitby CellTrailsID",
+    theme = theme(plot.title = element_text(hjust = 0.5, size = 12))
+  ) &
+    NoLegend(),
+  filename = 'plots/unintegrated_plots/dimplot_split_by_celltrailsID.png',
+  height = 11,
+  width = 14
+)
+```
+
+```{r}
+#| label: Plot 3D UMAP
+
+orig.plot3d.data <- FetchData(object = s_obj, vars = c("unintegUMAP_1", "unintegUMAP_2", "unintegUMAP_3", "CellTrailsID"))
+
+# Make a column of row name identities (these will be your cell/barcode names)
+orig.plot3d.data$label <- paste(rownames(orig.plot3d.data))
+# plot_ly_cols <-scCustomize_Palette(num_groups = 7, ggplot_default_colors = FALSE)
+
+# Plot your data, in this example my Seurat object had 21 clusters (0-20)
+merged_3dUMAP <- plot_ly(data = orig.plot3d.data, 
+        x = ~unintegUMAP_1, y = ~unintegUMAP_2, z = ~unintegUMAP_3, 
+        color = ~CellTrailsID, 
+        colors = sc_cols[1:11],
+        type = "scatter3d", 
+        mode = "markers",
+        marker = list(size = 3), # controls size of points
+        text=~label, #This is that extra column we made earlier for which we will use for cell ID
+        hoverinfo="text",
+        standalone=T
+        ) %>% layout(title = "chicken BP_utrS6_96h_nHCs 3D UMAP , CellTrailsID", margin = list(t = 100), showlegend = TRUE, legend = list(itemsizing = "constant", itemwidth = 100))
+
+merged_3dUMAP
+
+# Use --embed-resources to embed resources in the HTML file
+htmlwidgets::saveWidget(merged_3dUMAP, file = "plots/unintegrated_plots/3D_UMAP_unintegrated_BP_utrS6_96hnHCs_CellTrailsID.html", selfcontained = TRUE)
+
+```
+
+```{r}
+#| label: DGE analysis 
+
+Idents(s_obj$unintegrated_res_1.0)
+
+s_obj <- PrepSCTFindMarkers(s_obj)
+
+uninteg_res1.0_markers <- RunPrestoAll(s_obj)
+write.csv("tables/unintegrated_analysis/unint_BP_UtrS6_96hpdnHCs_res1.0_markers.csv")
+
+
+top10_markers <- uninteg_res1.0_markers %>% group_by(cluster) %>% slice_max(n = 10, order_by = c(-(p_val_adj), avg_log2FC))
+
+head(uninteg_res1.0_markers)
+```
+
+```{r}
+#| label: Find markers of desired cluster
+
+Idents(s_obj) <- s_obj$CellTrailsID
+
+utr_diff_HC_cell_markers <- RunPresto(s_obj,ident.1 = 'Differentiating Utr HC') 
+write.csv(utr_diff_HC_cell_markers, "tables/unintegrated_analysis/utr_diff_HC_vs_allClusters.csv")
+
+pd_96h_HC_cell_markers <- RunPresto(s_obj, ident.1 = "96h_pd_new_BP_HCs")
+write.csv(pd_96h_HC_cell_markers,"tables/unintegrated_analysis/96h_pdHCs_vs_allClusters.csv")
+
+BPHC_vs_96h_pd_HC_markers <- RunPresto(s_obj, ident.1 = c("BP.HC1", "BP.HC2"), ident.2 = "96h_pd_new_BP_HCs")
+write.csv(BPHC_vs_96h_pd_HC_markers, "tables/unintegrated_analysis/BPHCs_1and2_vs_96h_pd_HC_markers.csv")
+
+utr_diffHC_vs_striolar_InII_HC_markers <- RunPresto(s_obj, ident.1 = "Differentiating Utr HC", ident.2 = c("Striolar type I HC", "Striolar type II HC"))
+write.csv(x = utr_diffHC_vs_striolar_InII_HC_markers, "tables/unintegrated_analysis/utr_diffHC_vs_striolar_typeIandII_HC_markers.csv")
+
+utr_diffHC_vs_extrastriolar_typeII_HC_markers <- RunPresto(s_obj, ident.1 = "Differentiating Utr HC", ident.2 = c("Extrastriolar type II HC"))
+write.csv(x = utr_diffHC_vs_extrastriolar_typeII_HC_markers, file = "tables/unintegrated_analysis/utr_diffHC_vs_extrastriolar_typeII_HC_markers.csv")
+
+pd_96HC_vs_striolar_I_II_markers <- RunPresto(s_obj, ident.1 = "96h_pd_new_BP_HCs", ident.2 = c("Striolar type I HC", "Striolar type II HC"))
+write.csv(x = pd_96HC_vs_striolar_I_II_markers, file = "tables/unintegrated_analysis/pd_96HC_vs_striolar_I_II_markers.csv")
+
+pd_96HC_vs_extrastriolar_typeII_HC_markers <- RunPresto(s_obj, ident.1 = "96h_pd_new_BP_HCs", ident.2 = c("Extrastriolar type II HC"))
+write.csv(x = pd_96HC_vs_extrastriolar_typeII_HC_markers, file = "tables/unintegrated_analysis/pd_96HC_vs_extrastriolar_typeII_HC_markers.csv")
+
+```
+
+```{r}
+#| label: Enhanced Volcano plots
+
+ggsave(
+  plot = EnhancedVolcano(
+    toptable = utr_diffHC_vs_extrastriolar_typeII_HC_markers,
+    lab = rownames(utr_diffHC_vs_extrastriolar_typeII_HC_markers),
+    x = 'avg_log2FC',
+    y = 'p_val_adj',
+    FCcutoff = 2,
+    pCutoff = 1e-4 ,
+    title = "utr_diffHC_vs_extrastriolar_typeII_HC_markers",
+    subtitle = "FCcutoff = 2, pCutoff = 1e-4",
+    pointSize = 2,
+    labSize = 4, drawConnectors = T
+    
+  ),
+  filename = "plots/unintegrated_plots/utr_diffHC_vs_extrastriolar_typeII_HC_markers_volcanoPlot.png",
+  height = 10,
+  width = 8
+)
+```
+
+```{r}
+# Plot heatmap
+ggsave(
+  plot = dittoHeatmap(
+    s_obj,
+    top10_markers$gene,
+    annot.by = c(
+      "orig.ident",
+      "CellTrailsID",
+      "unintegrated_res_1.0"
+    ),
+    order.by = "CellTrailsID",
+    scaled.to.max = T,
+    heatmap.colors.max.scaled = colorRampPalette(c("white", "blue"))(50)
+  ),
+  filename = "plots/unintegrated_plots/unintegrated_top10markers_heatmap_res1.0.png",
+  height = 10,
+  width = 8
+)
+
+```
